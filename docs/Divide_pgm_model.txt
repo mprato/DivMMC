@@ -1,0 +1,161 @@
+DivIDE programming model
+------------------------
+
+DivIDE interacts with ZX Spectrum using I/O accesses  or automatically by
+replacing original ZX-ROM with its own memory, when CPU fetch from an 
+entry-point is detected (and such behavior is somehow allowed).
+
+DivIDE contains 8 kB ROM (could be not present, EPROM or EEPROM, in the third 
+case it's in-system reprogrammable) and 32-512 kB RAM. DivIDE can use system
+from 3rd 8k bank of its RAM, this is suitable especially for safe system
+development. Accidental EEPROM damage (due to unlucky out from crashed code)
+is fused by the on-board jumper.
+
+All ports are decoded using A0..A7 address-wires only. So you can access all
+eight IDE-registers from so caled command block (rrr=0..7) at addresses
+xxxx xxxx  101r rr11. Other divIDE  features are controlled using dedicated 
+port at address xxxx xxxx 1110 0011, which belongs to divIDE CONTROL REGISTER.
+
+
+IDE command block registers
+---------------------------
+
+[ DATA REGISTER (R/W) ]
+xxxx xxxx  1010 0011, 0a3h, 163
+
+This register serves for reading or writing sectors. It's 16-bit wide, so
+divIDE is joining write-pairs into words and splitting readed words into bytes.
+
+When reading from this register, each ODD access will return low byte of 
+readed word (while high byte is stored into latch and buffer pointer is shifted
+to next word). Each EVEN access will return that high byte, stored in previous
+read access to DATA REGISTER.
+
+When writing to DATA REGISTER, each ODD access will store the byte into latch.
+Each EVEN access will join the previously stored low portion  with actual byte 
+(considered to be high portion), and this word is written into harddrive (and 
+next word in harddrive buffer is pointed).
+
+After any access to non-data command block registers (rrr=1..7) or to divIDE
+control register, following DATA REGISTER access is considered to be ODD.
+Accesses outside divIDE ports cannot change the EVEN/ODD state. After reset or 
+power-on, this state is unknown.
+
+
+[ ERROR REGISTER (R) / FEATURES REGISTER (W) ]
+xxxx xxxx  1010 0111, 0a7h, 167
+
+[ SECTOR COUNT REGISTER (R/W) ]
+xxxx xxxx  1010 1011, 0abh, 171
+
+[ SECTOR NUMBER REGISTER (R/W) (too LBA bits 0..7) ]
+xxxx xxxx  1010 1111, 0afh, 175
+
+[ CYLINDER LOW REGISTER (R/W) (too LBA bits 8..15) ]
+xxxx xxxx  1011 0011, 0b3h, 179
+
+[ CYLINDER HIGH REGISTER (R/W) (too LBA bits 16..23) ]
+xxxx xxxx  1011 0111, 0b7h, 183
+
+[ DRIVE/HEAD REGISTER (R/W) (too LBA bits 24..28) ]
+xxxx xxxx  1011 1011, 0bbh, 187
+
+[ STATUS REGISTER (R) / COMMAND REGISTER (W) ]
+xxxx xxxx  1011 1111, 0bfh, 191
+
+
+For detailed desription of mentioned registers have a look at
+http://www.t13.org .
+
+
+DivIDE control register
+-----------------------
+
+[ CONTROL REGISTER (Write Only) ]
+xxxx xxxx 1110 0011, 0e3h, 227
+
+This register is write-only (readed data will be unknown). All bits are reset to 
+'0' after each power-on. Unimplemented bits, marked 'X', should be zeroed for
+future compatibility issues with more than 32kB RAM DivIDEs.
+
+    7        6     5  4  3  2   1       0
+[ CONMEM , MAPRAM, X, X, X, X, BANK1, BANK0 ]
+
+Bits BANK1 and BANK0 select the 8k bank, which normally appears in area 
+2000-3fffh, when divide memory is mapped.
+
+Bit MAPRAM can be set to '1' only (when it's '1', only power-on can return it
+to '0'). This bit allows 8k bank No.3 to act as EPROM/EEPROM, and write-protects
+it. Set it when system image is loaded into bank No.3 and you want to safe probe
+it till the next power-on. Set it also when you haven't EPROM/EEPROM, and you 
+want to use system. (Because u will possibly re-install it from MAPRAM mode, you
+will need CONMEM to override writeprotect. Because after returning to BASIC you
+rely on original ROM, you must reset automapper, which could be left in
+undesired state by previous bus transactions. Because it could be done only by
+fetching code from off-area, u must set DI, then call 1ffbh ('RET'), ten CONMEM, loading image, 
+releasing CONMEM and setting MAPRAM, then EI. Then the return is safe.)
+
+
+Bit CONMEM forces EPROM/EEPROM to 0000-1fffh and by BANK 1..0 selected bank to
+area 2000-3fffh, regardless to the actual divIDE state or to physical presence
+of EPROM/EEPROM. Bank in area 2000-3fffh is always writable, and in 0000-1fffh
+always appears EEPROM/EPROM, which is writable when EPROM jumper is open. Use
+it in third-party utilities for loading system or modules, or in system's 
+auto-upgrade process.
+
+
+Memory mapping
+--------------
+
+Memory mapping could be invoked manually (by setting CONMEM), or automatically
+(CPU has fetched opcode form an entry-point). Automatic mapping is active
+only if EPROM/EEPROM is present (jumper EPROM is closed) or bit MAPRAM is set.
+Automatic mapping occurs at the begining of refresh cycle after fetching
+opcodes (M1 cycle) from 0000h, 0008h, 0038h, 0066h, 04c6h and 0562h. It's
+also mapped instantly (100ns after /MREQ of that fetch is falling down) after
+executing opcode from area 3d00..3dffh. Memory is automatically disconnected in
+refresh cycle of the instruction fetch from so called off-area, which is 
+1ff8-1fffh.
+
+The one-instruction delay could be used to distinguish between nested calls to
+the same place. For such trick you will place different instruction at the
+entrypoint address, than is in original ZX ROM. So the first call wil execute
+original instruction, but subsequent one  will jump to another code, because
+divIDE memory was already mapped, with its changed opcode. It's great for 100% 
+avoidance of nested NMI, which cannot be implemented using pure combinatorial
+hardware workaround. It allows divIDE to use INT for timing, when divIDE code is
+performed (external calls will map later divIDE off and continue in #38h 
+original service, but nested INTs can jump to  another work, and mapping off is
+of course undesirable there).
+
+In automatic mapping, when MAPRAM is set, in location 0000h-1fffh appears 
+write-protected Bank No.3, instead of EEPROM/EPROM. The meaning-priority is
+(from lowest to highest) EPROM jumper -> MAPRAM -> CONMEM. So because that
+jumper is no more significant when MAPRAM or even CONMEM is set, it's used
+to distinguish between fused or unfused EEPROM state for CONMEM mode. 
+
+So, when CONMEM is set, there is:
+0000-1fffh - EEPROM/EPROM/NOTHING(if empty socket), and this area is
+	     flash-writable if EPROM jumper is open.
+2000-3fffh - 8k bank, selected by BANK 0..1 bits, always writable.
+
+When MAPRAM is set, but CONMEM is zero, and entrypoint was reached:
+0000-1fffh - Bank No.3, read-only
+2000-3fffh - 8k bank, selected by BANK 0..1. If it's different from Bank No.3,
+	     it's writable.
+
+When MAPRAM is zero, CONMEM is zero, EPROM jumper is closed and entrypoint was
+reached:
+0000-1fffh - EEPROM/EPROM/NOTHING(if empty socket, so open jumper in this case),
+	     read-only.
+2000-3fffh - 8k bank, selected by BANK 0..1, always writable.
+
+Otherwise, there's normal speccy memory layout. No modified ROM, no shit.
+
+And, that's all, Folks! Do you think, it's too complex? Read it once again.
+Do you still think, it's not sane? Feel free to ask me (Zilog), my email is
+xcimbal@quick.cz. I hope you will enjoy this piece of hardware, i have spent 
+months for optimising this marvelous piece of shit.
+
+With regards
+		Zilog
