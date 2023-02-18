@@ -2,14 +2,16 @@
 23/01/2023
 Divmmc with allram
 
-Added new control port ZXMMC_ENABLE, address $F3/243 with the following function:
+Added new control port ZXMMC_ENABLE, address $0F3B/dec 3899 ($F3/243 initially proposed was discarded) with the following function:
 
-D7 -> ALLRAM, D6 -> WRLOCK, D5 -> MAPDISABLE, D4-D0 reserved for future use
+D7 -> ALLRAM, D6 -> WRLOCK, D5 -> MAPDISABLE, D4 -> MAPRAM_PAGE, D3-D0 reserved for future use
 
+MAPRAM_PAGE=1 change mapram page from 3 to 11 (128K divmmc) or 59 (512K interfaces).
 ALLRAM=1 disables spectrum rom and maps divmmc ram into $0000-$4000 memory space, there are 8 ram pages on 128K divmmc and 32 pages with 512K.
 WRLOCK=1 locks any write to divmmc ram 
 MAPDISABLE=1 prevents any automatic rom mapping from the interface. SD card interface is always enabled.
-All bits are cleared on poweron, reset does nothing
+All bits are cleared on poweron, reset does nothing. 
+
 
 Pages addressing:
 
@@ -25,6 +27,13 @@ With Divmmc paging active there are only 2 pages avalaible meanwhile all ram is 
       0            7ffdh bit 4          7ffdh bit 4
   
 With this addressing method we can load ZX Spectrum 48K, 128K and +2A/+3 roms into ram and make it work like real roms.
+
+Other modifications vs original divmmc:
+
+1) if mapram is set, now writing to port Divide_Control_port $E3/227 with %11XXXXXX resets mapram and set conmem (as suggested by Velesoft).
+2) Bit 4 of port $7ffd is present and if set disables any other writing to this port (as in original 128K Spectrum). Bit is cleared with reset.
+3) Nmi button is disabled when conmem is active.
+
 
 
 Mario
